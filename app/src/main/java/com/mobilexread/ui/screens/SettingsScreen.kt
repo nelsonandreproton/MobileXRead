@@ -105,10 +105,10 @@ fun SettingsScreen(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
             )
             ListItem(
-                headlineContent = { Text("Instâncias Nitter") },
+                headlineContent = { Text("Fonte: FxTwitter") },
                 supportingContent = {
                     Text(
-                        "Usa automaticamente a melhor instância disponível entre 7 alternativas",
+                        "Os tweets são extraídos via api.fxtwitter.com (sem autenticação). Apenas o tweet partilhado é processado — threads e tweets ligados não são suportados.",
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                     )
                 }

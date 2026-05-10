@@ -1,6 +1,7 @@
 package com.mobilexread.data.model
 
 import com.mobilexread.data.local.ArticleEntity
+import com.mobilexread.data.local.ArticleStatus
 import java.time.Instant
 
 data class Article(
@@ -12,7 +13,9 @@ data class Article(
     val summaryPoints: List<String>,
     val tweetDate: Instant?,
     val processedDate: Instant,
-    val language: String
+    val language: String,
+    val status: ArticleStatus = ArticleStatus.COMPLETED,
+    val errorMessage: String? = null
 )
 
 fun ArticleEntity.toArticle(summaryPoints: List<String>): Article = Article(
@@ -24,5 +27,7 @@ fun ArticleEntity.toArticle(summaryPoints: List<String>): Article = Article(
     summaryPoints = summaryPoints,
     tweetDate = tweetDateMillis?.let { Instant.ofEpochMilli(it) },
     processedDate = Instant.ofEpochMilli(processedDateMillis),
-    language = language
+    language = language,
+    status = status,
+    errorMessage = errorMessage
 )

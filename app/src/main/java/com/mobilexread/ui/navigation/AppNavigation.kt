@@ -8,6 +8,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import com.mobilexread.ui.screens.ArticleDetailScreen
 import com.mobilexread.ui.screens.ArticleListScreen
+import com.mobilexread.ui.screens.LogsScreen
 import com.mobilexread.ui.screens.ModelSetupScreen
 import com.mobilexread.ui.screens.SettingsScreen
 
@@ -16,6 +17,7 @@ object Routes {
     const val ARTICLE_DETAIL = "article_detail/{articleId}"
     const val SETTINGS = "settings"
     const val MODEL_SETUP = "model_setup"
+    const val LOGS = "logs"
 
     fun articleDetail(id: Long) = "article_detail/$id"
 }
@@ -29,7 +31,8 @@ fun AppNavigation(
         composable(Routes.ARTICLE_LIST) {
             ArticleListScreen(
                 onArticleClick = { id -> navController.navigate(Routes.articleDetail(id)) },
-                onSettingsClick = { navController.navigate(Routes.SETTINGS) }
+                onSettingsClick = { navController.navigate(Routes.SETTINGS) },
+                onLogsClick = { navController.navigate(Routes.LOGS) }
             )
         }
         composable(
@@ -53,6 +56,9 @@ fun AppNavigation(
                 onBack = { navController.popBackStack() },
                 onModelImported = { navController.popBackStack() }
             )
+        }
+        composable(Routes.LOGS) {
+            LogsScreen(onBack = { navController.popBackStack() })
         }
     }
 }

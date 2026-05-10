@@ -20,7 +20,6 @@ class ModelManager @Inject constructor(
 ) {
     companion object {
         val MODEL_PATH_KEY = stringPreferencesKey("model_path")
-        const val MODEL_FILENAME = "gemma3_1b_int4.bin"
         // Kaggle download page for Gemma 3 1B LiteRT/MediaPipe model
         const val MODEL_DOWNLOAD_URL =
             "https://www.kaggle.com/models/google/gemma/frameworks/tfLite/variations/gemma3-1b-it-gpu-int4"
@@ -33,8 +32,9 @@ class ModelManager @Inject constructor(
         prefs[MODEL_PATH_KEY]?.takeIf { File(it).exists() }
     }
 
-    suspend fun importModel(inputStream: InputStream): String {
-        val destination = File(modelsDir, MODEL_FILENAME)
+    suspend fun importModel(inputStream: InputStream, sourceExtension: String = "task"): String {
+        val ext = sourceExtension.trimStart('.').ifBlank { "task" }
+        val destination = File(modelsDir, "gemma3_1b_int4.$ext")
         inputStream.use { input ->
             destination.outputStream().use { output ->
                 input.copyTo(output)
@@ -46,13 +46,18 @@ class ModelManager @Inject constructor(
     }
 
     fun getModelPathSync(): String? =
-        File(modelsDir, MODEL_FILENAME).takeIf { it.exists() }?.absolutePath
+        listOf("task", "bin", "litertlm").firstNotNullOfOrNull { ext ->
+            File(modelsDir, "gemma3_1b_int4.$ext").takeIf { it.exists() }
+        }?.absolutePath
 
     fun deleteModel() {
-        File(modelsDir, MODEL_FILENAME).delete()
+        listOf("task", "bin", "litertlm").forEach { ext ->
+            File(modelsDir, "gemma3_1b_int4.$ext").delete()
+        }
     }
 
     fun modelFileSizeMb(): Long =
-        File(modelsDir, MODEL_FILENAME).takeIf { it.exists() }
-            ?.let { it.length() / (1024 * 1024) } ?: 0L
+        listOf("task", "bin", "litertlm").firstNotNullOfOrNull { ext ->
+            File(modelsDir, "gemma3_1b_int4.$ext").takeIf { it.exists() }
+        }?.let { it.length() / (1024 * 1024) } ?: 0L
 }

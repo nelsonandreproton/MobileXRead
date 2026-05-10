@@ -1,3 +1,5 @@
+.claude/
+gradle/wrapper/gradle-wrapper.jar
 *.iml
 .gradle
 /local.properties
