@@ -4,7 +4,10 @@ import android.content.Context
 import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import com.mobilexread.scraper.TweetData
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -21,31 +24,60 @@ class GemmaInference @Inject constructor(
     private val modelManager: ModelManager
 ) {
     private var llmInference: LlmInference? = null
+    private val loadMutex = Mutex()
 
     fun isLoaded(): Boolean = llmInference != null
 
     suspend fun loadModel(): Unit = withContext(Dispatchers.Default) {
-        if (llmInference != null) return@withContext
-        val path = modelManager.getModelPathSync()
-            ?: throw IllegalStateException("Modelo não encontrado. Configura o modelo nas definições.")
-        val options = LlmInference.LlmInferenceOptions.builder()
-            .setModelPath(path)
-            .setMaxTokens(2048)
-            .setTemperature(0.7f)
-            .setTopK(40)
-            .build()
-        llmInference = LlmInference.createFromOptions(context, options)
+        loadMutex.withLock {
+            if (llmInference != null) return@withLock
+            val path = modelManager.getModelPathSync()
+                ?: throw IllegalStateException("Modelo não encontrado. Configura o modelo nas definições.")
+            val options = LlmInference.LlmInferenceOptions.builder()
+                .setModelPath(path)
+                .setMaxTokens(2048)
+                .setTemperature(0.7f)
+                .setTopK(40)
+                .build()
+            llmInference = LlmInference.createFromOptions(context, options)
+        }
     }
 
-    suspend fun summarize(tweetData: TweetData): SummaryResult = withContext(Dispatchers.Default) {
-        val engine = llmInference ?: run {
-            loadModel()
-            llmInference!!
+    suspend fun summarize(
+        tweetData: TweetData,
+        onPartialResult: (String) -> Unit = {}
+    ): SummaryResult = withContext(Dispatchers.Default) {
+        val engine = loadMutex.withLock {
+            llmInference ?: run {
+                loadModel()
+                llmInference!!
+            }
         }
-        val fullText = tweetData.fullText().take(6000)
-        val prompt = buildPrompt(tweetData.handle, fullText)
-        val raw = engine.generateResponse(prompt)
+        val prompt = buildPrompt(tweetData.handle, tweetData.fullText().take(6000))
+        val raw = generateStreaming(engine, prompt, onPartialResult)
         parseResponse(raw)
+    }
+
+    // Uses generateResponseAsync for real-time token streaming
+    private suspend fun generateStreaming(
+        engine: LlmInference,
+        prompt: String,
+        onToken: (String) -> Unit
+    ): String {
+        val deferred = CompletableDeferred<String>()
+        var accumulated = ""
+        runCatching {
+            engine.generateResponseAsync(prompt) { partial, done ->
+                if (partial != null) {
+                    accumulated += partial
+                    onToken(accumulated)
+                }
+                if (done && !deferred.isCompleted) deferred.complete(accumulated)
+            }
+        }.onFailure { e ->
+            if (!deferred.isCompleted) deferred.completeExceptionally(e)
+        }
+        return deferred.await()
     }
 
     private fun buildPrompt(handle: String, content: String): String = """
@@ -96,7 +128,8 @@ Response:
             points + remaining
         } else points
 
-        val language = detectLanguage(title + " " + finalPoints.joinToString(" "))
+        val textForLang = (title + " " + finalPoints.joinToString(" ")).trim()
+        val language = if (textForLang.length > 20) detectLanguage(textForLang) else "en"
         return SummaryResult(title = title, points = finalPoints.take(10), detectedLanguage = language)
     }
 

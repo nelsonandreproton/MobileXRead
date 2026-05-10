@@ -15,7 +15,8 @@ import javax.inject.Inject
 
 sealed class ProcessingState {
     data object Idle : ProcessingState()
-    data class Loading(val step: String) : ProcessingState()
+    data class Loading(val step: String, val partialText: String = "") : ProcessingState()
+    data class AlreadyExists(val articleId: Long) : ProcessingState()
     data class Success(val articleId: Long) : ProcessingState()
     data class Error(val message: String) : ProcessingState()
 }
@@ -33,10 +34,17 @@ class ProcessingViewModel @Inject constructor(
     fun process(url: String) {
         if (_state.value is ProcessingState.Loading) return
         viewModelScope.launch {
-            runCatching {
+            try {
                 _state.value = ProcessingState.Loading("A validar URL…")
                 if (!url.contains("x.com") && !url.contains("twitter.com")) {
                     throw IllegalArgumentException("URL não reconhecido. Partilha um link do X/Twitter.")
+                }
+
+                // Duplicate check — skip re-processing if URL already exists
+                val existing = repository.findByUrl(url)
+                if (existing != null) {
+                    _state.value = ProcessingState.AlreadyExists(existing.id)
+                    return@launch
                 }
 
                 _state.value = ProcessingState.Loading("A extrair tweet…")
@@ -50,11 +58,14 @@ class ProcessingViewModel @Inject constructor(
                     _state.value = ProcessingState.Loading("A ler tweets incorporados…")
                 }
 
-                _state.value = ProcessingState.Loading("A carregar modelo de IA…")
-                gemmaInference.loadModel()
+                _state.value = ProcessingState.Loading(
+                    if (gemmaInference.isLoaded()) "A preparar resumo…" else "A carregar modelo de IA…"
+                )
 
-                _state.value = ProcessingState.Loading("A gerar resumo (pode demorar 30-90s)…")
-                val summary = gemmaInference.summarize(tweetData)
+                val summary = gemmaInference.summarize(tweetData) { partial ->
+                    // Stream tokens as they arrive — show live preview
+                    _state.value = ProcessingState.Loading("A gerar resumo…", partial.take(200))
+                }
 
                 _state.value = ProcessingState.Loading("A guardar…")
                 val article = Article(
@@ -70,7 +81,7 @@ class ProcessingViewModel @Inject constructor(
                 )
                 val savedId = repository.saveArticle(article)
                 _state.value = ProcessingState.Success(savedId)
-            }.onFailure { e ->
+            } catch (e: Exception) {
                 _state.value = ProcessingState.Error(
                     e.message ?: "Erro desconhecido. Tenta novamente."
                 )

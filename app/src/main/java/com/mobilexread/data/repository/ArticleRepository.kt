@@ -38,10 +38,16 @@ class ArticleRepository @Inject constructor(
         return dao.insertArticle(entity)
     }
 
+    suspend fun findByUrl(url: String): Article? =
+        dao.getArticleByUrl(url)?.let { it.toArticle(parseSummaryJson(it.summaryJson)) }
+
     suspend fun deleteArticle(id: Long) = dao.deleteArticleById(id)
 
-    private fun parseSummaryJson(json: String): List<String> = runCatching {
-        val type = object : TypeToken<List<String>>() {}.type
-        gson.fromJson<List<String>>(json, type)
-    }.getOrDefault(emptyList())
+    private fun parseSummaryJson(json: String): List<String> {
+        if (json.isBlank()) return emptyList()
+        return runCatching {
+            val type = object : TypeToken<List<String>>() {}.type
+            gson.fromJson<List<String>>(json, type) ?: emptyList()
+        }.getOrElse { emptyList() }
+    }
 }

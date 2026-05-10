@@ -1,6 +1,8 @@
 package com.mobilexread.ui.screens
 
 import android.content.Intent
+import android.net.Uri
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -169,7 +171,11 @@ private fun ArticleContent(article: Article, modifier: Modifier = Modifier) {
                     fontFamily = FontFamily.Monospace
                 ),
                 color = MaterialTheme.colorScheme.primary,
-                maxLines = 2
+                maxLines = 2,
+                modifier = Modifier.clickable {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(article.originalUrl))
+                    context.startActivity(intent)
+                }
             )
             Spacer(modifier = Modifier.height(12.dp))
             Divider(color = MaterialTheme.colorScheme.surfaceVariant)
