@@ -95,39 +95,41 @@ class GemmaInference @Inject constructor(
     }
 
     private fun buildPrompt(handle: String, content: String): String = """
-You are an expert content summarizer. Summarize the following tweet by @$handle.
+Summarize the tweet below. Do NOT write any preamble or commentary — output ONLY the structured response.
 
-Instructions:
-- Write a one-line title (max 80 chars) that captures the main idea, starting with "@$handle — "
-- Write exactly 10 bullet points summarizing the key ideas
+Rules:
+- TITLE: one descriptive sentence (max 80 chars) capturing the core idea; do NOT start with "@$handle", "Okay", "Sure", "Here", or conversational words
+- 10 bullet points with the key ideas
 - Use the SAME LANGUAGE as the tweet content
-- Be concise and informative
-- Format your response EXACTLY as shown below
 
-TITLE: [title here]
-1. [point 1]
-2. [point 2]
-3. [point 3]
-4. [point 4]
-5. [point 5]
-6. [point 6]
-7. [point 7]
-8. [point 8]
-9. [point 9]
-10. [point 10]
+TITLE: <one-sentence summary of the main idea>
+1. <key point>
+2. <key point>
+3. <key point>
+4. <key point>
+5. <key point>
+6. <key point>
+7. <key point>
+8. <key point>
+9. <key point>
+10. <key point>
 
-Tweet content:
+Tweet by @$handle:
 $content
 
-Response:
-""".trimIndent()
+TITLE:""".trimIndent()
 
     private fun parseResponse(raw: String): SummaryResult {
         val lines = raw.lines().map { it.trim() }.filter { it.isNotBlank() }
+
+        // Model continues directly after the "TITLE:" prompt suffix, so the first
+        // non-blank line is the title text; fall back to an explicit TITLE: tag.
         val titleLine = lines.firstOrNull { it.startsWith("TITLE:", ignoreCase = true) }
-        val title = titleLine
-            ?.removePrefix("TITLE:")?.removePrefix("title:")?.trim()
-            ?: lines.firstOrNull() ?: "Sem título"
+        val title = when {
+            titleLine != null -> titleLine.removePrefix("TITLE:").removePrefix("title:").trim()
+            lines.isNotEmpty() && !Regex("^\\d{1,2}[.)\\-]").containsMatchIn(lines[0]) -> lines[0]
+            else -> "Sem título"
+        }
 
         val pointRegex = Regex("^(\\d{1,2})[.)\\-]\\s+(.+)")
         val points = lines.mapNotNull { line ->

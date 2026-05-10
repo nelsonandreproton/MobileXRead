@@ -20,6 +20,7 @@ class ModelManager @Inject constructor(
 ) {
     companion object {
         val MODEL_PATH_KEY = stringPreferencesKey("model_path")
+        val RAINDROP_API_KEY = stringPreferencesKey("raindrop_api_key")
         // Kaggle download page for Gemma 3 1B LiteRT/MediaPipe model
         const val MODEL_DOWNLOAD_URL =
             "https://www.kaggle.com/models/google/gemma/frameworks/tfLite/variations/gemma3-1b-it-gpu-int4"
@@ -30,6 +31,14 @@ class ModelManager @Inject constructor(
 
     val modelPath: Flow<String?> = dataStore.data.map { prefs ->
         prefs[MODEL_PATH_KEY]?.takeIf { File(it).exists() }
+    }
+
+    val raindropApiKey: Flow<String?> = dataStore.data.map { prefs ->
+        prefs[RAINDROP_API_KEY]?.takeIf { it.isNotBlank() }
+    }
+
+    suspend fun saveRaindropApiKey(key: String) {
+        dataStore.edit { it[RAINDROP_API_KEY] = key.trim() }
     }
 
     suspend fun importModel(inputStream: InputStream, sourceExtension: String = "task"): String {

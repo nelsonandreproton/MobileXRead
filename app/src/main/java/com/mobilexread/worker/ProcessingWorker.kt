@@ -15,6 +15,7 @@ import com.mobilexread.data.model.Article
 import com.mobilexread.data.repository.ArticleRepository
 import com.mobilexread.data.repository.LogRepository
 import com.mobilexread.llm.GemmaInference
+import com.mobilexread.raindrop.RaindropRepository
 import com.mobilexread.scraper.FxTwitterScraper
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
@@ -28,7 +29,8 @@ class ProcessingWorker @AssistedInject constructor(
     private val scraper: FxTwitterScraper,
     private val gemmaInference: GemmaInference,
     private val repository: ArticleRepository,
-    private val logRepository: LogRepository
+    private val logRepository: LogRepository,
+    private val raindropRepository: RaindropRepository
 ) : CoroutineWorker(appContext, workerParams) {
 
     companion object {
@@ -97,6 +99,14 @@ class ProcessingWorker @AssistedInject constructor(
             repository.markCompleted(articleId, article)
             logRepository.info("✓ Concluído com sucesso", articleId = articleId, url = url)
             showCompletionNotification(summary.title)
+
+            val excerpt = summary.points.joinToString("\n") { "• $it" }
+            val raindropResult = raindropRepository.sendBookmark(url, summary.title, excerpt)
+            raindropResult.fold(
+                onSuccess = { logRepository.info("→ Guardado no Raindrop.io", articleId = articleId, url = url) },
+                onFailure = { e -> logRepository.warn("→ Raindrop ignorado: ${e.message}", articleId = articleId, url = url) }
+            )
+
             Result.success()
         } catch (e: CancellationException) {
             logRepository.warn("⚡ Worker cancelado", articleId = articleId, url = url)

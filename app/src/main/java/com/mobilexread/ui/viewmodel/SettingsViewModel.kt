@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import kotlinx.coroutines.flow.asStateFlow
 
 sealed class ModelImportState {
     data object Idle : ModelImportState()
@@ -30,8 +31,31 @@ class SettingsViewModel @Inject constructor(
     val modelPath: StateFlow<String?> = modelManager.modelPath
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
+    val raindropApiKey: StateFlow<String?> = modelManager.raindropApiKey
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
     private val _importState = MutableStateFlow<ModelImportState>(ModelImportState.Idle)
     val importState: StateFlow<ModelImportState> = _importState
+
+    private val _raindropSaveState = MutableStateFlow<String?>(null)
+    val raindropSaveState: StateFlow<String?> = _raindropSaveState.asStateFlow()
+
+    fun saveRaindropApiKey(key: String) {
+        viewModelScope.launch {
+            modelManager.saveRaindropApiKey(key)
+            _raindropSaveState.value = "saved"
+        }
+    }
+
+    fun clearRaindropApiKey() {
+        viewModelScope.launch {
+            modelManager.saveRaindropApiKey("")
+        }
+    }
+
+    fun resetRaindropSaveState() {
+        _raindropSaveState.value = null
+    }
 
     fun importModelFromUri(uri: Uri) {
         viewModelScope.launch {
