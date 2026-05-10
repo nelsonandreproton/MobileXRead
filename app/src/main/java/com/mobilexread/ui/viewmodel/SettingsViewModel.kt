@@ -39,7 +39,8 @@ class SettingsViewModel @Inject constructor(
             runCatching {
                 val inputStream = context.contentResolver.openInputStream(uri)
                     ?: throw Exception("Não foi possível abrir o ficheiro")
-                modelManager.importModel(inputStream)
+                val ext = uri.lastPathSegment?.substringAfterLast('.', "") ?: "task"
+                modelManager.importModel(inputStream, ext)
                 _importState.value = ModelImportState.Success
             }.onFailure { e ->
                 _importState.value = ModelImportState.Error(

@@ -2,6 +2,7 @@ package com.mobilexread.llm
 
 import android.content.Context
 import com.google.mediapipe.tasks.genai.llminference.LlmInference
+import com.google.mediapipe.tasks.genai.llminference.LlmInferenceSession
 import com.mobilexread.scraper.TweetData
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CompletableDeferred
@@ -9,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -28,31 +30,37 @@ class GemmaInference @Inject constructor(
 
     fun isLoaded(): Boolean = llmInference != null
 
-    suspend fun loadModel(): Unit = withContext(Dispatchers.Default) {
-        loadMutex.withLock {
-            if (llmInference != null) return@withLock
-            val path = modelManager.getModelPathSync()
-                ?: throw IllegalStateException("Modelo não encontrado. Configura o modelo nas definições.")
-            val options = LlmInference.LlmInferenceOptions.builder()
-                .setModelPath(path)
-                .setMaxTokens(2048)
-                .setTemperature(0.7f)
-                .setTopK(40)
-                .build()
-            llmInference = LlmInference.createFromOptions(context, options)
+    suspend fun loadModel(): Unit = withContext(Dispatchers.IO) {
+        withTimeout(540_000L) { // 9 min — under WorkManager's 10 min hard limit
+            loadMutex.withLock {
+                if (llmInference != null) return@withLock
+                val path = modelManager.getModelPathSync()
+                    ?: throw IllegalStateException("Modelo não encontrado. Configura o modelo nas definições.")
+                val options = LlmInference.LlmInferenceOptions.builder()
+                    .setModelPath(path)
+                    .setMaxTokens(2048)
+                    .build()
+                llmInference = LlmInference.createFromOptions(context, options)
+            }
         }
+    }
+
+    private fun newSession(engine: LlmInference): LlmInferenceSession {
+        val sessionOptions = LlmInferenceSession.LlmInferenceSessionOptions.builder()
+            .setTemperature(0.7f)
+            .setTopK(40)
+            .build()
+        return LlmInferenceSession.createFromOptions(engine, sessionOptions)
     }
 
     suspend fun summarize(
         tweetData: TweetData,
         onPartialResult: (String) -> Unit = {}
-    ): SummaryResult = withContext(Dispatchers.Default) {
-        val engine = loadMutex.withLock {
-            llmInference ?: run {
-                loadModel()
-                llmInference!!
-            }
-        }
+    ): SummaryResult = withContext(Dispatchers.IO) {
+        // loadModel() handles the mutex internally — don't hold the lock here
+        if (llmInference == null) loadModel()
+        val engine = llmInference
+            ?: throw IllegalStateException("Modelo não carregado após loadModel()")
         val prompt = buildPrompt(tweetData.handle, tweetData.fullText().take(6000))
         val raw = generateStreaming(engine, prompt, onPartialResult)
         parseResponse(raw)
@@ -66,8 +74,10 @@ class GemmaInference @Inject constructor(
     ): String {
         val deferred = CompletableDeferred<String>()
         var accumulated = ""
+        val session = newSession(engine)
         runCatching {
-            engine.generateResponseAsync(prompt) { partial, done ->
+            session.addQueryChunk(prompt)
+            session.generateResponseAsync { partial, done ->
                 if (partial != null) {
                     accumulated += partial
                     onToken(accumulated)
@@ -77,11 +87,15 @@ class GemmaInference @Inject constructor(
         }.onFailure { e ->
             if (!deferred.isCompleted) deferred.completeExceptionally(e)
         }
-        return deferred.await()
+        return try {
+            deferred.await()
+        } finally {
+            runCatching { session.close() }
+        }
     }
 
     private fun buildPrompt(handle: String, content: String): String = """
-You are an expert content summarizer. Summarize the following tweet thread by @$handle.
+You are an expert content summarizer. Summarize the following tweet by @$handle.
 
 Instructions:
 - Write a one-line title (max 80 chars) that captures the main idea, starting with "@$handle — "
@@ -102,7 +116,7 @@ TITLE: [title here]
 9. [point 9]
 10. [point 10]
 
-Tweet thread content:
+Tweet content:
 $content
 
 Response:

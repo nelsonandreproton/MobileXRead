@@ -13,5 +13,7 @@ data class ArticleEntity(
     val summaryJson: String,
     val tweetDateMillis: Long?,
     val processedDateMillis: Long,
-    val language: String
+    val language: String,
+    val status: ArticleStatus = ArticleStatus.COMPLETED,
+    val errorMessage: String? = null
 )
