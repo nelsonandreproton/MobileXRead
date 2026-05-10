@@ -128,6 +128,7 @@ fun ArticleDetailScreen(
 
 @Composable
 private fun ArticleContent(article: Article, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
     val dateFormatter = DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.getDefault())
     val tweetDateStr = article.tweetDate?.let {
         dateFormatter.format(it.atZone(ZoneId.systemDefault()))

@@ -2,6 +2,7 @@ package com.mobilexread.llm
 
 import android.content.Context
 import com.google.mediapipe.tasks.genai.llminference.LlmInference
+import com.google.mediapipe.tasks.genai.llminference.LlmInferenceSession
 import com.mobilexread.scraper.TweetData
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CompletableDeferred
@@ -9,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -28,31 +30,37 @@ class GemmaInference @Inject constructor(
 
     fun isLoaded(): Boolean = llmInference != null
 
-    suspend fun loadModel(): Unit = withContext(Dispatchers.Default) {
-        loadMutex.withLock {
-            if (llmInference != null) return@withLock
-            val path = modelManager.getModelPathSync()
-                ?: throw IllegalStateException("Modelo não encontrado. Configura o modelo nas definições.")
-            val options = LlmInference.LlmInferenceOptions.builder()
-                .setModelPath(path)
-                .setMaxTokens(2048)
-                .setTemperature(0.7f)
-                .setTopK(40)
-                .build()
-            llmInference = LlmInference.createFromOptions(context, options)
+    suspend fun loadModel(): Unit = withContext(Dispatchers.IO) {
+        withTimeout(540_000L) { // 9 min — under WorkManager's 10 min hard limit
+            loadMutex.withLock {
+                if (llmInference != null) return@withLock
+                val path = modelManager.getModelPathSync()
+                    ?: throw IllegalStateException("Modelo não encontrado. Configura o modelo nas definições.")
+                val options = LlmInference.LlmInferenceOptions.builder()
+                    .setModelPath(path)
+                    .setMaxTokens(2048)
+                    .build()
+                llmInference = LlmInference.createFromOptions(context, options)
+            }
         }
+    }
+
+    private fun newSession(engine: LlmInference): LlmInferenceSession {
+        val sessionOptions = LlmInferenceSession.LlmInferenceSessionOptions.builder()
+            .setTemperature(0.7f)
+            .setTopK(40)
+            .build()
+        return LlmInferenceSession.createFromOptions(engine, sessionOptions)
     }
 
     suspend fun summarize(
         tweetData: TweetData,
         onPartialResult: (String) -> Unit = {}
-    ): SummaryResult = withContext(Dispatchers.Default) {
-        val engine = loadMutex.withLock {
-            llmInference ?: run {
-                loadModel()
-                llmInference!!
-            }
-        }
+    ): SummaryResult = withContext(Dispatchers.IO) {
+        // loadModel() handles the mutex internally — don't hold the lock here
+        if (llmInference == null) loadModel()
+        val engine = llmInference
+            ?: throw IllegalStateException("Modelo não carregado após loadModel()")
         val prompt = buildPrompt(tweetData.handle, tweetData.fullText().take(6000))
         val raw = generateStreaming(engine, prompt, onPartialResult)
         parseResponse(raw)
@@ -66,8 +74,10 @@ class GemmaInference @Inject constructor(
     ): String {
         val deferred = CompletableDeferred<String>()
         var accumulated = ""
+        val session = newSession(engine)
         runCatching {
-            engine.generateResponseAsync(prompt) { partial, done ->
+            session.addQueryChunk(prompt)
+            session.generateResponseAsync { partial, done ->
                 if (partial != null) {
                     accumulated += partial
                     onToken(accumulated)
@@ -77,43 +87,49 @@ class GemmaInference @Inject constructor(
         }.onFailure { e ->
             if (!deferred.isCompleted) deferred.completeExceptionally(e)
         }
-        return deferred.await()
+        return try {
+            deferred.await()
+        } finally {
+            runCatching { session.close() }
+        }
     }
 
     private fun buildPrompt(handle: String, content: String): String = """
-You are an expert content summarizer. Summarize the following tweet thread by @$handle.
+Summarize the tweet below. Do NOT write any preamble or commentary — output ONLY the structured response.
 
-Instructions:
-- Write a one-line title (max 80 chars) that captures the main idea, starting with "@$handle — "
-- Write exactly 10 bullet points summarizing the key ideas
+Rules:
+- TITLE: one descriptive sentence (max 80 chars) capturing the core idea; do NOT start with "@$handle", "Okay", "Sure", "Here", or conversational words
+- 10 bullet points with the key ideas
 - Use the SAME LANGUAGE as the tweet content
-- Be concise and informative
-- Format your response EXACTLY as shown below
 
-TITLE: [title here]
-1. [point 1]
-2. [point 2]
-3. [point 3]
-4. [point 4]
-5. [point 5]
-6. [point 6]
-7. [point 7]
-8. [point 8]
-9. [point 9]
-10. [point 10]
+TITLE: <one-sentence summary of the main idea>
+1. <key point>
+2. <key point>
+3. <key point>
+4. <key point>
+5. <key point>
+6. <key point>
+7. <key point>
+8. <key point>
+9. <key point>
+10. <key point>
 
-Tweet thread content:
+Tweet by @$handle:
 $content
 
-Response:
-""".trimIndent()
+TITLE:""".trimIndent()
 
     private fun parseResponse(raw: String): SummaryResult {
         val lines = raw.lines().map { it.trim() }.filter { it.isNotBlank() }
+
+        // Model continues directly after the "TITLE:" prompt suffix, so the first
+        // non-blank line is the title text; fall back to an explicit TITLE: tag.
         val titleLine = lines.firstOrNull { it.startsWith("TITLE:", ignoreCase = true) }
-        val title = titleLine
-            ?.removePrefix("TITLE:")?.removePrefix("title:")?.trim()
-            ?: lines.firstOrNull() ?: "Sem título"
+        val title = when {
+            titleLine != null -> titleLine.removePrefix("TITLE:").removePrefix("title:").trim()
+            lines.isNotEmpty() && !Regex("^\\d{1,2}[.)\\-]").containsMatchIn(lines[0]) -> lines[0]
+            else -> "Sem título"
+        }
 
         val pointRegex = Regex("^(\\d{1,2})[.)\\-]\\s+(.+)")
         val points = lines.mapNotNull { line ->
